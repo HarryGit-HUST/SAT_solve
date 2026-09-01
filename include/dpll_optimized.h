@@ -1,7 +1,7 @@
 #pragma once
-
 #include "types.h"
-#include "cnf_parser.h"
+#include "config.h"
+#include "timer.h"
 
 struct Watcher
 {
@@ -30,5 +30,6 @@ struct Solver2WL
 
 Solver2WL *create_solver_2wl(const CNFFormula *formula);
 void free_solver_2wl(Solver2WL *solver);
-bool dpll_solve_optimized(Solver2WL *solver);
 
+// 2WL 优化版 DPLL（带超时控制）
+SolverStatus dpll_solve_optimized_timeout(Solver2WL *solver, double timeout_ms, double *elapsed_ms);

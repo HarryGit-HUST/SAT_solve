@@ -2,7 +2,9 @@
 #include <iomanip>
 #include <fstream>
 #include <string>
-#include <filesystem> // C++17 跨平台文件系统库
+#include <filesystem>
+#include "config.h"
+#include "types.h"
 #include "cnf_parser.h"
 #include "dpll_baseline.h"
 #include "dpll_optimized.h"
@@ -11,7 +13,6 @@
 
 namespace fs = std::filesystem;
 
-// 存储文件列表的手动动态数组结构（严格遵循不用 STL vector 的原则）
 #define MAX_CASE_FILES 512
 struct FileList
 {
@@ -20,53 +21,11 @@ struct FileList
     int count;
 };
 
-// 规范保存 .res 结果文件
-void save_solution_to_res(const char *cnf_filepath, int status, const int *assignment, int num_vars, double elapsed_ms)
-{
-    std::string res_path = cnf_filepath;
-    size_t last_dot = res_path.find_last_of('.');
-    if (last_dot != std::string::npos)
-    {
-        res_path = res_path.substr(0, last_dot);
-    }
-    res_path += ".res";
-
-    std::ofstream fout(res_path);
-    if (!fout.is_open())
-        return;
-
-    // s 结果: 1 (SAT), 0 (UNSAT), -1 (Timeout/Unknown)
-    fout << "s " << status << "\n";
-
-    // v 满足解赋值
-    if (status == 1 && assignment != nullptr)
-    {
-        fout << "v ";
-        for (int i = 1; i <= num_vars; ++i)
-        {
-            if (assignment[i] == VAL_TRUE)
-                fout << i << " ";
-            else
-                fout << -i << " ";
-        }
-        fout << "\n";
-    }
-
-    // t 求解耗时 (ms)
-    fout << "t " << std::fixed << std::setprecision(2) << elapsed_ms << "\n";
-    fout.close();
-    std::cout << ">> 结果已成功保存到: " << res_path << std::endl;
-}
-
-// 核心求解与性能对比测试入口
 void run_benchmark_on_file(const char *filepath)
 {
     CNFFormula *formula = parse_cnf(filepath);
     if (!formula)
-    {
-        std::cerr << ">> [错误] 无法解析 CNF 文件: " << filepath << std::endl;
         return;
-    }
 
     std::cout << "\n=====================================================" << std::endl;
     std::cout << "算例文件: " << filepath << std::endl;
@@ -75,45 +34,61 @@ void run_benchmark_on_file(const char *filepath)
     std::cout << "子句/变元比: " << std::fixed << std::setprecision(2) << ratio << std::endl;
     std::cout << "-----------------------------------------------------" << std::endl;
 
-    Timer timer;
+    double timeout_limit = DEFAULT_TIMEOUT_MS; // 10秒超时
     double t_base = 0.0, t_opt = 0.0;
-    bool res_base = false, res_opt = false;
 
-    // 1. 基础版本 DPLL
+    // 1. 运行基础版
     int *assign_base = new int[formula->num_vars + 1];
     for (int i = 0; i <= formula->num_vars; ++i)
         assign_base[i] = VAL_UNASSIGNED;
 
     std::cout << "正在运行 [基础版 DPLL]..." << std::flush;
-    timer.start();
-    res_base = dpll_recursive_baseline(formula, assign_base);
-    t_base = timer.stop();
+    SolverStatus res_base = dpll_solve_baseline_timeout(formula, assign_base, timeout_limit, &t_base);
     std::cout << " 完成!" << std::endl;
 
-    // 2. 优化版本 2WL DPLL
+    // 2. 运行优化版
     Solver2WL *solver = create_solver_2wl(formula);
 
     std::cout << "正在运行 [2WL 优化版 DPLL]..." << std::flush;
-    timer.start();
-    res_opt = dpll_solve_optimized(solver);
-    t_opt = timer.stop();
+    SolverStatus res_opt = dpll_solve_optimized_timeout(solver, timeout_limit, &t_opt);
     std::cout << " 完成!" << std::endl;
 
     // 3. 打印对比报告
     std::cout << "-----------------------------------------------------" << std::endl;
-    std::cout << "[基础版] 结果: " << (res_base ? "SATISFIABLE" : "UNSATISFIABLE")
-              << " | 耗时 (t) : " << std::fixed << std::setprecision(3) << t_base << " ms" << std::endl;
-    std::cout << "[优化版] 结果: " << (res_opt ? "SATISFIABLE" : "UNSATISFIABLE")
-              << " | 耗时 (to): " << std::fixed << std::setprecision(3) << t_opt << " ms" << std::endl;
+    if (res_base == STATUS_TIMEOUT)
+    {
+        std::cout << "[基础版] 结果: TIMEOUT (超时) | 耗时 (t) : >= " << timeout_limit << " ms" << std::endl;
+    }
+    else
+    {
+        std::cout << "[基础版] 结果: " << (res_base == STATUS_SAT ? "SATISFIABLE" : "UNSATISFIABLE")
+                  << " | 耗时 (t) : " << std::fixed << std::setprecision(3) << t_base << " ms" << std::endl;
+    }
 
-    if (t_base > 0.0)
+    if (res_opt == STATUS_TIMEOUT)
+    {
+        std::cout << "[优化版] 结果: TIMEOUT (超时) | 耗时 (to): >= " << timeout_limit << " ms" << std::endl;
+    }
+    else
+    {
+        std::cout << "[优化版] 结果: " << (res_opt == STATUS_SAT ? "SATISFIABLE" : "UNSATISFIABLE")
+                  << " | 耗时 (to): " << std::fixed << std::setprecision(3) << t_opt << " ms" << std::endl;
+    }
+
+    // 4. 优化率计算 (若基础版超时，计算理论下限)
+    if (res_base == STATUS_TIMEOUT && res_opt != STATUS_TIMEOUT)
+    {
+        double lower_bound_rate = ((timeout_limit - t_opt) / timeout_limit) * 100.0;
+        std::cout << ">>> 性能优化率: >= " << std::fixed << std::setprecision(2) << lower_bound_rate << " % (保守估计下限) <<<" << std::endl;
+    }
+    else if (res_base != STATUS_TIMEOUT && t_base > 0)
     {
         double rate = ((t_base - t_opt) / t_base) * 100.0;
         std::cout << ">>> 性能优化率: " << std::fixed << std::setprecision(2) << rate << " % <<<" << std::endl;
     }
 
-    // 4. 导出 .res 文件
-    save_solution_to_res(filepath, res_opt ? 1 : 0, solver->assignment, formula->num_vars, t_opt);
+    // 5. 按照规范导出 .res (s 1 / s 0 / s -1)
+    save_solution_to_res(filepath, (int)res_opt, solver->assignment, formula->num_vars, t_opt);
     std::cout << "=====================================================" << std::endl;
 
     delete[] assign_base;
@@ -121,10 +96,8 @@ void run_benchmark_on_file(const char *filepath)
     free_cnf(formula);
 }
 
-// 自动扫描 cnf_case 目录并呈现菜单选择
 void select_and_run_cnf()
 {
-    // 候选目录：兼容从根目录运行或从 build 目录运行
     std::string target_dir = "cnf_case";
     if (!fs::exists(target_dir))
     {
@@ -143,7 +116,6 @@ void select_and_run_cnf()
     FileList fl;
     fl.count = 0;
 
-    // 扫描目录下的所有 .cnf 文件
     for (const auto &entry : fs::directory_iterator(target_dir))
     {
         if (entry.is_regular_file() && entry.path().extension() == ".cnf")
@@ -163,7 +135,6 @@ void select_and_run_cnf()
         return;
     }
 
-    // 格式化输出文件列表
     std::cout << "\n================ 发现的 CNF 测试算例 ================" << std::endl;
     for (int i = 0; i < fl.count; ++i)
     {
@@ -194,10 +165,8 @@ void select_and_run_cnf()
     }
 }
 
-// 主交互总控菜单
 int main(int argc, char *argv[])
 {
-    // 支持命令行直接跟参数运行：./sat_solver ../cnf_case/sud00001.cnf
     if (argc > 1)
     {
         run_benchmark_on_file(argv[1]);

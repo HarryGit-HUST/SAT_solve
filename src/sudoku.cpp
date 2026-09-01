@@ -6,7 +6,6 @@
 #include <cstring>
 #include "timer.h"
 
-// 星形数独 9 个特定星形坐标 (0-indexed: 行 0~8, 列 0~8)
 const int ASTERISK_COORDS[9][2] = {
     {1, 4}, {2, 2}, {2, 6}, {4, 1}, {4, 4}, {4, 7}, {6, 2}, {6, 6}, {7, 4}};
 
@@ -33,7 +32,6 @@ void var_to_pos(int var, int *r, int *c, int *v)
     *v = (var % 9) + 1;
 }
 
-// 动态构建 CNF 子句
 static void add_clause_to_cnf(CNFFormula *f, int *c_idx, int *lit_buf, int size)
 {
     Clause *c = &f->clauses[*c_idx];
@@ -48,13 +46,11 @@ static void add_clause_to_cnf(CNFFormula *f, int *c_idx, int *lit_buf, int size)
     (*c_idx)++;
 }
 
-// 核心：数独规则转化为 CNF 公式
 CNFFormula *sudoku_to_cnf(const SudokuBoard *board)
 {
     CNFFormula *formula = new CNFFormula();
     formula->num_vars = 729;
 
-    // 计算总子句数：基础约束 11988 条 + 星形约束 333 条 + 提示数条数
     int clue_count = 0;
     for (int r = 0; r < 9; ++r)
     {
@@ -70,7 +66,7 @@ CNFFormula *sudoku_to_cnf(const SudokuBoard *board)
     int c_idx = 0;
     int buf[10];
 
-    // 1. 单元格约束 (At-least-1 & At-most-1)
+    // 1. 单元格约束
     for (int r = 0; r < 9; ++r)
     {
         for (int c = 0; c < 9; ++c)
@@ -162,7 +158,7 @@ CNFFormula *sudoku_to_cnf(const SudokuBoard *board)
         }
     }
 
-    // 5. 星形区域特殊约束 (Asterisk Constraint)
+    // 5. 星形区域特殊约束
     for (int v = 1; v <= 9; ++v)
     {
         for (int i = 0; i < 9; ++i)
@@ -181,7 +177,7 @@ CNFFormula *sudoku_to_cnf(const SudokuBoard *board)
         }
     }
 
-    // 6. 初始提示数约束 (单子句)
+    // 6. 初始提示数
     for (int r = 0; r < 9; ++r)
     {
         for (int c = 0; c < 9; ++c)
@@ -198,7 +194,6 @@ CNFFormula *sudoku_to_cnf(const SudokuBoard *board)
     return formula;
 }
 
-// 解码求解结果
 bool cnf_to_sudoku(const Solver2WL *solver, SudokuBoard *board)
 {
     for (int var = 1; var <= 729; ++var)
@@ -213,13 +208,11 @@ bool cnf_to_sudoku(const Solver2WL *solver, SudokuBoard *board)
     return true;
 }
 
-// 自动生成星形数独 (基于挖洞法)
 SudokuBoard generate_asterisk_sudoku(int holes)
 {
     SudokuBoard full_board;
     std::memset(&full_board, 0, sizeof(full_board));
 
-    // 随机填充几个种子数字，利用 SAT 求解器瞬间生成完整合法终盘
     std::srand((unsigned)std::time(nullptr));
     for (int i = 0; i < 9; ++i)
     {
@@ -231,25 +224,24 @@ SudokuBoard generate_asterisk_sudoku(int holes)
 
     CNFFormula *f = sudoku_to_cnf(&full_board);
     Solver2WL *solver = create_solver_2wl(f);
-    if (dpll_solve_optimized(solver))
+    double dummy_t = 0.0;
+    if (dpll_solve_optimized_timeout(solver, 5000.0, &dummy_t) == STATUS_SAT)
     {
         cnf_to_sudoku(solver, &full_board);
     }
     else
     {
-        // 如果极罕见情况种子冲突，退回全空求解
         free_solver_2wl(solver);
         free_cnf(f);
         std::memset(&full_board, 0, sizeof(full_board));
         f = sudoku_to_cnf(&full_board);
         solver = create_solver_2wl(f);
-        dpll_solve_optimized(solver);
+        dpll_solve_optimized_timeout(solver, 5000.0, &dummy_t);
         cnf_to_sudoku(solver, &full_board);
     }
     free_solver_2wl(solver);
     free_cnf(f);
 
-    // 挖洞过程
     SudokuBoard puzzle = full_board;
     int dug = 0;
     while (dug < holes)
@@ -265,7 +257,6 @@ SudokuBoard generate_asterisk_sudoku(int holes)
     return puzzle;
 }
 
-// 终端棋盘可视化打印（带 * 号高亮星形格）
 void print_sudoku_board(const SudokuBoard *board)
 {
     std::cout << "\n       1 2 3   4 5 6   7 8 9" << std::endl;
@@ -303,16 +294,13 @@ void print_sudoku_board(const SudokuBoard *board)
               << std::endl;
 }
 
-// SAT 求解接口
 bool solve_sudoku_board(SudokuBoard *board, double *elapsed_ms)
 {
     CNFFormula *formula = sudoku_to_cnf(board);
     Solver2WL *solver = create_solver_2wl(formula);
 
-    Timer timer;
-    timer.start();
-    bool sat = dpll_solve_optimized(solver);
-    *elapsed_ms = timer.stop();
+    SolverStatus status = dpll_solve_optimized_timeout(solver, 5000.0, elapsed_ms);
+    bool sat = (status == STATUS_SAT);
 
     if (sat)
     {
@@ -324,7 +312,6 @@ bool solve_sudoku_board(SudokuBoard *board, double *elapsed_ms)
     return sat;
 }
 
-// 交互式游戏循环
 void play_sudoku_interactive()
 {
     std::cout << "\n请选择游戏难度 [1-简单(挖30空), 2-中等(挖45空), 3-困难(挖55空)]: ";
@@ -333,7 +320,7 @@ void play_sudoku_interactive()
         diff = 1;
     int holes = (diff == 1) ? 30 : ((diff == 2) ? 45 : 55);
 
-    std::cout << "thinking..." << std::endl;
+    std::cout << "正在基于【挖洞法】生成合法星形数独游戏格局..." << std::endl;
     SudokuBoard board = generate_asterisk_sudoku(holes);
 
     while (true)
@@ -366,7 +353,7 @@ void play_sudoku_interactive()
         else if (op == 2)
         {
             double t_solve = 0.0;
-            std::cout << ">> philosophing..." << std::endl;
+            std::cout << ">> 正在将棋盘归约为 CNF 并调用 2WL 求解器..." << std::endl;
             if (solve_sudoku_board(&board, &t_solve))
             {
                 std::cout << ">> 求解成功！求解耗时: " << std::fixed << std::setprecision(3) << t_solve << " ms" << std::endl;
