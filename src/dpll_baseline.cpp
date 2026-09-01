@@ -38,7 +38,7 @@ static int check_clause_status(const Clause *clause, const int *assignment, int 
     return 0;
 }
 
-static bool unit_propagate_baseline(const CNFFormula *formula, int *assignment, int *forced_vars, int *forced_count)
+static bool unit_propagate_baseline(const CNFFormula *formula, int *assignment, int *forced_vars, int *forced_count, SolverStats *stats)
 {
     bool has_unit = true;
     *forced_count = 0;
@@ -52,12 +52,18 @@ static bool unit_propagate_baseline(const CNFFormula *formula, int *assignment, 
             int status = check_clause_status(&formula->clauses[i], assignment, &unit_lit);
 
             if (status == -1)
+            {
+                if (stats)
+                    stats->conflicts++;
                 return false;
+            }
             if (status == 0 && unit_lit != 0)
             {
                 int var = std::abs(unit_lit);
                 assignment[var] = (unit_lit > 0) ? VAL_TRUE : VAL_FALSE;
                 forced_vars[(*forced_count)++] = var;
+                if (stats)
+                    stats->propagations++;
                 has_unit = true;
                 break;
             }
@@ -90,7 +96,8 @@ static int pick_branching_variable_baseline(int num_vars, const int *assignment)
 
 // 递归主体
 static SolverStatus dpll_baseline_core(const CNFFormula *formula, int *assignment,
-                                       Timer *timer, double timeout_ms, unsigned long long &call_count)
+                                       Timer *timer, double timeout_ms, unsigned long long &call_count,
+                                       SolverStats *stats)
 {
     // 周期性超时检测
     if ((++call_count & TIMEOUT_CHECK_MASK) == 0)
@@ -104,7 +111,7 @@ static SolverStatus dpll_baseline_core(const CNFFormula *formula, int *assignmen
     int *forced_vars = new int[formula->num_vars + 1];
     int forced_count = 0;
 
-    if (!unit_propagate_baseline(formula, assignment, forced_vars, &forced_count))
+    if (!unit_propagate_baseline(formula, assignment, forced_vars, &forced_count, stats))
     {
         for (int i = 0; i < forced_count; ++i)
             assignment[forced_vars[i]] = VAL_UNASSIGNED;
@@ -129,7 +136,9 @@ static SolverStatus dpll_baseline_core(const CNFFormula *formula, int *assignmen
 
     // 尝试 True 分支
     assignment[branch_var] = VAL_TRUE;
-    SolverStatus res = dpll_baseline_core(formula, assignment, timer, timeout_ms, call_count);
+    if (stats)
+        stats->decisions++;
+    SolverStatus res = dpll_baseline_core(formula, assignment, timer, timeout_ms, call_count, stats);
     if (res == STATUS_SAT || res == STATUS_TIMEOUT)
     {
         delete[] forced_vars;
@@ -138,7 +147,9 @@ static SolverStatus dpll_baseline_core(const CNFFormula *formula, int *assignmen
 
     // 尝试 False 分支
     assignment[branch_var] = VAL_FALSE;
-    res = dpll_baseline_core(formula, assignment, timer, timeout_ms, call_count);
+    if (stats)
+        stats->decisions++;
+    res = dpll_baseline_core(formula, assignment, timer, timeout_ms, call_count, stats);
     if (res == STATUS_SAT || res == STATUS_TIMEOUT)
     {
         delete[] forced_vars;
@@ -153,12 +164,12 @@ static SolverStatus dpll_baseline_core(const CNFFormula *formula, int *assignmen
     return STATUS_UNSAT;
 }
 
-SolverStatus dpll_solve_baseline_timeout(const CNFFormula *formula, int *assignment, double timeout_ms, double *elapsed_ms)
+SolverStatus dpll_solve_baseline_timeout(const CNFFormula *formula, int *assignment, double timeout_ms, double *elapsed_ms, SolverStats *stats)
 {
     Timer timer;
     timer.start();
     unsigned long long call_count = 0;
-    SolverStatus status = dpll_baseline_core(formula, assignment, &timer, timeout_ms, call_count);
+    SolverStatus status = dpll_baseline_core(formula, assignment, &timer, timeout_ms, call_count, stats);
     *elapsed_ms = timer.stop();
     return status;
 }

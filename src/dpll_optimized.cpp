@@ -58,6 +58,11 @@ Solver2WL *create_solver_2wl(const CNFFormula *formula)
     solver->trail = (int *)malloc(sizeof(int) * (formula->num_vars + 1));
     solver->trail_top = 0;
 
+    solver->stats.decisions = 0;
+    solver->stats.propagations = 0;
+    solver->stats.conflicts = 0;
+    solver->stats.restarts = 0;
+
     solver->jw_scores = (double *)calloc(total_lit_slots, sizeof(double));
     for (int i = 0; i < formula->num_clauses; ++i)
     {
@@ -158,11 +163,13 @@ static bool bcp_2wl(Solver2WL *solver, int qhead)
                 while (++i < ws->size)
                     ws->list[j++] = ws->list[i];
                 ws->size = j;
+                solver->stats.conflicts++;
                 return false;
             }
             else if (val0 == VAL_UNASSIGNED)
             {
                 assign_literal(solver, lit0);
+                solver->stats.propagations++;
             }
         }
         ws->size = j;
@@ -223,6 +230,7 @@ static SolverStatus dpll_2wl_dfs_timeout(Solver2WL *solver, Timer *timer, double
 
     int save_top = solver->trail_top;
     assign_literal(solver, branch_lit);
+    solver->stats.decisions++;
 
     if (bcp_2wl(solver, save_top))
     {
@@ -233,6 +241,7 @@ static SolverStatus dpll_2wl_dfs_timeout(Solver2WL *solver, Timer *timer, double
     backtrack_to_top(solver, save_top);
 
     assign_literal(solver, -branch_lit);
+    solver->stats.decisions++;
     if (bcp_2wl(solver, save_top))
     {
         SolverStatus res = dpll_2wl_dfs_timeout(solver, timer, timeout_ms, call_count);

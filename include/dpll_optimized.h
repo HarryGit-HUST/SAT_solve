@@ -26,6 +26,7 @@ struct Solver2WL
     int *trail;
     int trail_top;
     double *jw_scores;
+    SolverStats stats; // 求解过程统计（决策/传播/冲突次数）
 };
 
 Solver2WL *create_solver_2wl(const CNFFormula *formula);

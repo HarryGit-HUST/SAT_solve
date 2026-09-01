@@ -54,6 +54,15 @@ struct SolverCDCL {
     int restart_inc;
     int luby_u;
     int luby_v;
+    long long next_restart; // 下一次重启的冲突数阈值（从当前冲突数累加，避免重启连发）
+
+    // 学习子句库管理 (LBD 打分 + 定期缩减)
+    bool *del_mark;     // 缩减时标记待删除的学习子句
+    bool *level_mark;   // LBD 计算时标记已出现的决策层
+    long long next_reduce; // 下一次缩减的冲突数阈值
+
+    // 求解过程统计（写入 .res 附加信息）
+    SolverStats stats;
 };
 
 // 接口

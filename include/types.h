@@ -25,7 +25,18 @@ typedef struct
     int size;          // 当前有效文字数
     int original_size; // 原始文字数
     bool is_satisfied; // 是否满足标记
+    bool learnt;       // 是否为 CDCL 学习子句（原式子句恒为 false）
+    int lbd;           // 学习子句 LBD(Glue) 得分：涉及的决策层数，越小越有价值
 } Clause;
+
+// 求解过程统计信息（写入 .res 的 t 行附加信息，也用于性能分析）
+typedef struct
+{
+    long long decisions;    // 分支决策次数
+    long long propagations; // 单子句传播强制赋值次数
+    long long conflicts;    // 冲突次数
+    long long restarts;     // 重启次数（仅 CDCL）
+} SolverStats;
 
 // CNF 公式物理结构
 typedef struct

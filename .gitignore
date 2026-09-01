@@ -2,3 +2,4 @@ build
 cnf_case
 build2
 test_logs*
+*.exe

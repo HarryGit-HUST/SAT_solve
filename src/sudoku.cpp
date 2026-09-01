@@ -1,4 +1,5 @@
 #include "sudoku.h"
+#include "dpll_cdcl.h"
 #include <iostream>
 #include <iomanip>
 #include <cstdlib>
@@ -194,11 +195,11 @@ CNFFormula *sudoku_to_cnf(const SudokuBoard *board)
     return formula;
 }
 
-bool cnf_to_sudoku(const Solver2WL *solver, SudokuBoard *board)
+bool cnf_to_sudoku(const int *assignment, SudokuBoard *board)
 {
     for (int var = 1; var <= 729; ++var)
     {
-        if (solver->assignment[var] == VAL_TRUE)
+        if (assignment[var] == VAL_TRUE)
         {
             int r, c, v;
             var_to_pos(var, &r, &c, &v);
@@ -206,6 +207,31 @@ bool cnf_to_sudoku(const Solver2WL *solver, SudokuBoard *board)
         }
     }
     return true;
+}
+
+// 数独 CNF 求解：优先 CDCL 引擎，超时则退回 2WL 引擎兜底
+static SolverStatus solve_sudoku_cnf(CNFFormula *formula, SudokuBoard *board, double *elapsed_ms)
+{
+    SolverCDCL *solver = create_solver_cdcl(formula);
+    SolverStatus status = cdcl_solve_timeout(solver, 5000.0, elapsed_ms);
+    if (status == STATUS_SAT)
+    {
+        cnf_to_sudoku(solver->assignment, board);
+    }
+    free_solver_cdcl(solver);
+
+    if (status != STATUS_TIMEOUT)
+        return status;
+
+    // CDCL 超时 → 2WL 兜底
+    Solver2WL *solver_2wl = create_solver_2wl(formula);
+    status = dpll_solve_optimized_timeout(solver_2wl, 5000.0, elapsed_ms);
+    if (status == STATUS_SAT)
+    {
+        cnf_to_sudoku(solver_2wl->assignment, board);
+    }
+    free_solver_2wl(solver_2wl);
+    return status;
 }
 
 SudokuBoard generate_asterisk_sudoku(int holes)
@@ -223,23 +249,14 @@ SudokuBoard generate_asterisk_sudoku(int holes)
     }
 
     CNFFormula *f = sudoku_to_cnf(&full_board);
-    Solver2WL *solver = create_solver_2wl(f);
     double dummy_t = 0.0;
-    if (dpll_solve_optimized_timeout(solver, 5000.0, &dummy_t) == STATUS_SAT)
+    if (solve_sudoku_cnf(f, &full_board, &dummy_t) != STATUS_SAT)
     {
-        cnf_to_sudoku(solver, &full_board);
-    }
-    else
-    {
-        free_solver_2wl(solver);
         free_cnf(f);
         std::memset(&full_board, 0, sizeof(full_board));
         f = sudoku_to_cnf(&full_board);
-        solver = create_solver_2wl(f);
-        dpll_solve_optimized_timeout(solver, 5000.0, &dummy_t);
-        cnf_to_sudoku(solver, &full_board);
+        solve_sudoku_cnf(f, &full_board, &dummy_t);
     }
-    free_solver_2wl(solver);
     free_cnf(f);
 
     SudokuBoard puzzle = full_board;
@@ -297,19 +314,11 @@ void print_sudoku_board(const SudokuBoard *board)
 bool solve_sudoku_board(SudokuBoard *board, double *elapsed_ms)
 {
     CNFFormula *formula = sudoku_to_cnf(board);
-    Solver2WL *solver = create_solver_2wl(formula);
 
-    SolverStatus status = dpll_solve_optimized_timeout(solver, 5000.0, elapsed_ms);
-    bool sat = (status == STATUS_SAT);
+    SolverStatus status = solve_sudoku_cnf(formula, board, elapsed_ms);
 
-    if (sat)
-    {
-        cnf_to_sudoku(solver, board);
-    }
-
-    free_solver_2wl(solver);
     free_cnf(formula);
-    return sat;
+    return status == STATUS_SAT;
 }
 
 void play_sudoku_interactive()
@@ -353,7 +362,7 @@ void play_sudoku_interactive()
         else if (op == 2)
         {
             double t_solve = 0.0;
-            std::cout << ">> 正在将棋盘归约为 CNF 并调用 2WL 求解器..." << std::endl;
+            std::cout << ">> 正在将棋盘归约为 CNF 并调用 CDCL 求解器 (2WL 兜底)..." << std::endl;
             if (solve_sudoku_board(&board, &t_solve))
             {
                 std::cout << ">> 求解成功！求解耗时: " << std::fixed << std::setprecision(3) << t_solve << " ms" << std::endl;
