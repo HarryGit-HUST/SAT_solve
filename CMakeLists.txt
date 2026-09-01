@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(SAT_Solver LANGUAGES C CXX)
 
 # 设置 C++ 标准为 C++14 (兼容 std::chrono、fstream 等)
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 默认编译类型为 Release (带有 -O3 优化，测耗时必须开优化)

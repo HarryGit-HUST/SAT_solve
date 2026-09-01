@@ -31,3 +31,4 @@ struct Solver2WL
 Solver2WL *create_solver_2wl(const CNFFormula *formula);
 void free_solver_2wl(Solver2WL *solver);
 bool dpll_solve_optimized(Solver2WL *solver);
+

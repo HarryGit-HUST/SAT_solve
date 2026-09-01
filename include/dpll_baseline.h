@@ -178,3 +178,4 @@ bool dpll_recursive_baseline(const CNFFormula *formula, int *assignment)
     delete[] forced_vars;
     return false;
 }
+

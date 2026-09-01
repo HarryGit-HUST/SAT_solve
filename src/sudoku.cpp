@@ -333,7 +333,7 @@ void play_sudoku_interactive()
         diff = 1;
     int holes = (diff == 1) ? 30 : ((diff == 2) ? 45 : 55);
 
-    std::cout << "正在基于【挖洞法】生成合法星形数独游戏格局..." << std::endl;
+    std::cout << "thinking..." << std::endl;
     SudokuBoard board = generate_asterisk_sudoku(holes);
 
     while (true)
@@ -366,7 +366,7 @@ void play_sudoku_interactive()
         else if (op == 2)
         {
             double t_solve = 0.0;
-            std::cout << ">> 正在将棋盘归约为 CNF 并调用 2WL 求解器..." << std::endl;
+            std::cout << ">> philosophing..." << std::endl;
             if (solve_sudoku_board(&board, &t_solve))
             {
                 std::cout << ">> 求解成功！求解耗时: " << std::fixed << std::setprecision(3) << t_solve << " ms" << std::endl;

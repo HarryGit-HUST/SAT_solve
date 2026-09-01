@@ -3,6 +3,7 @@
 #include <string>
 #include <cstdlib>
 #include"cnf_parser.h"
+#include <iomanip>
 
 // 假设单条子句不超过 65536
 #define MAX_LITS_PER_CLAUSE 65536
@@ -132,41 +133,3 @@ void print_and_verify_cnf(const CNFFormula *formula, std::ostream &out)
     out << "-------------我是分割线------------" << std::endl;
 }
 
-// 在 src/cnf_read.cpp 或主程序中添加
-void save_solution_to_res(const char *cnf_filepath, int status, const int *assignment, int num_vars, double elapsed_ms)
-{
-    // 将 .cnf 扩展名替换为 .res
-    std::string res_path = cnf_filepath;
-    size_t last_dot = res_path.find_last_of('.');
-    if (last_dot != std::string::npos)
-    {
-        res_path = res_path.substr(0, last_dot);
-    }
-    res_path += ".res";
-
-    std::ofstream fout(res_path);
-    if (!fout.is_open())
-        return;
-
-    // 输出 s 结果: 1 (SAT), 0 (UNSAT), -1 (Timeout/Unknown)
-    fout << "s " << status << "\n";
-
-    // 若满足，输出 v 赋值序列 (1 ~ num_vars)
-    if (status == 1 && assignment != nullptr)
-    {
-        fout << "v ";
-        for (int i = 1; i <= num_vars; ++i)
-        {
-            if (assignment[i] == VAL_TRUE)
-                fout << i << " ";
-            else
-                fout << -i << " ";
-        }
-        fout << "\n";
-    }
-
-    // 输出 t 执行时间 (毫秒)
-    fout << "t " << std::fixed << std::setprecision(2) << elapsed_ms << "\n";
-    fout.close();
-    std::cout << ">> 结果已保存至文件: " << res_path << std::endl;
-}

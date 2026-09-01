@@ -17,5 +17,9 @@ void print_and_verify_cnf(const CNFFormula *formula, std::ostream &out);
 
 // 求解结果输出保存到 .res 文件
 void save_solution(const char *filepath, SolverResult res, const VarValue *assignment, int num_vars, double elapsed_ms);
+// 声明保存函数
+void save_solution_to_res(const char *cnf_filepath, int status, const int *assignment, int num_vars, double elapsed_ms);
+
+
 
 #endif
