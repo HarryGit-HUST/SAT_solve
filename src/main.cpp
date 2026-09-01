@@ -1,78 +1,93 @@
 #include <iostream>
 #include <iomanip>
-#include <cstring>
 #include "cnf_parser.h"
 #include "dpll_baseline.h"
 #include "dpll_optimized.h"
 #include "timer.h"
+#include "sudoku.h"
+
+// 声明保存函数
+void save_solution_to_res(const char *cnf_filepath, int status, const int *assignment, int num_vars, double elapsed_ms);
+
+void run_benchmark_on_file(const char *filepath)
+{
+    CNFFormula *formula = parse_cnf(filepath);
+    if (!formula)
+        return;
+
+    std::cout << "\n=====================================================" << std::endl;
+    std::cout << "算例文件: " << filepath << std::endl;
+    std::cout << "变元数: " << formula->num_vars << " | 子句数: " << formula->num_clauses << std::endl;
+
+    Timer timer;
+    double t_base = 0.0, t_opt = 0.0;
+    bool res_base = false, res_opt = false;
+
+    // 1. 基础 DPLL
+    int *assign_base = new int[formula->num_vars + 1];
+    for (int i = 0; i <= formula->num_vars; ++i)
+        assign_base[i] = VAL_UNASSIGNED;
+    timer.start();
+    res_base = dpll_recursive_baseline(formula, assign_base);
+    t_base = timer.stop();
+
+    // 2. 优化 2WL DPLL
+    Solver2WL *solver = create_solver_2wl(formula);
+    timer.start();
+    res_opt = dpll_solve_optimized(solver);
+    t_opt = timer.stop();
+
+    std::cout << "[基础版] 结果: " << (res_base ? "SAT" : "UNSAT") << " | 耗时(t) : " << std::fixed << std::setprecision(3) << t_base << " ms" << std::endl;
+    std::cout << "[优化版] 结果: " << (res_opt ? "SAT" : "UNSAT") << " | 耗时(to): " << std::fixed << std::setprecision(3) << t_opt << " ms" << std::endl;
+
+    if (t_base > 0.0)
+    {
+        double rate = ((t_base - t_opt) / t_base) * 100.0;
+        std::cout << ">>> 性能优化率: " << std::fixed << std::setprecision(2) << rate << " % <<<" << std::endl;
+    }
+
+    // 按照规范输出 .res 文件
+    save_solution_to_res(filepath, res_opt ? 1 : 0, solver->assignment, formula->num_vars, t_opt);
+
+    delete[] assign_base;
+    free_solver_2wl(solver);
+    free_cnf(formula);
+}
 
 int main(int argc, char *argv[])
 {
-    const char *filename = (argc > 1) ? argv[1] : "test.cnf";
-
-    std::cout << "=====================================================" << std::endl;
-    std::cout << "        不要用我解鸽笼和异或展开等等          " << std::endl;
-    std::cout << "=====================================================" << std::endl;
-    std::cout << "算例: " << filename << std::endl;
-
-    // 1. 读取 CNF 文件
-    CNFFormula *formula = parse_cnf(filename);
-    if (!formula)
-        return 1;
-
-    std::cout << "变元总数: " << formula->num_vars << " | 子句总数: " << formula->num_clauses << std::endl;
-    std::cout << "-----------------------------------------------------" << std::endl;
-
-    Timer timer;
-    double t_base = 0.0;
-    double t_opt = 0.0;
-    bool res_base = false;
-    bool res_opt = false;
-    // 3. 运行 2WL 优化版本 DPLL (Optimized)
+    if (argc > 1)
     {
-        Solver2WL *solver = create_solver_2wl(formula);
-
-        timer.start();
-        res_opt = dpll_solve_optimized(solver);
-        t_opt = timer.stop();
-
-        free_solver_2wl(solver);
+        run_benchmark_on_file(argv[1]);
+        return 0;
     }
 
-    std::cout << "[v2] 结果: " << (res_opt ? "SAT" : "UNSAT")
-              << " | 耗时 (to): " << std::fixed << std::setprecision(3) << t_opt << " ms" << std::endl;
-    std::cout << "-----------------------------------------------------" << std::endl;
-
-    // 2. 运行基础版本 DPLL (Baseline)
+    while (true)
     {
-        int *assignment = new int[formula->num_vars + 1];
-        for (int i = 0; i <= formula->num_vars; ++i)
-            assignment[i] = VAL_UNASSIGNED;
+        std::cout << "\n=====================================================" << std::endl;
+        std::cout << "           SAT 求解器与星形数独系统 (SAT-Sudoku)      " << std::endl;
+        std::cout << "=====================================================" << std::endl;
+        std::cout << " [1] 运行 SAT 算例基准测试与导出 .res 文件" << std::endl;
+        std::cout << " [2] 星形数独游戏 (自动出题 / 交互填数 / SAT求解)" << std::endl;
+        std::cout << " [0] 退出系统" << std::endl;
+        std::cout << "=====================================================" << std::endl;
+        std::cout << "请选择操作 [0-2]: ";
 
-        timer.start();
-        res_base = dpll_recursive_baseline(formula, assignment);
-        t_base = timer.stop();
+        int choice;
+        if (!(std::cin >> choice) || choice == 0)
+            break;
 
-        delete[] assignment;
+        if (choice == 1)
+        {
+            std::string path;
+            std::cout << "请输入 .cnf 文件路径: ";
+            std::cin >> path;
+            run_benchmark_on_file(path.c_str());
+        }
+        else if (choice == 2)
+        {
+            play_sudoku_interactive();
+        }
     }
-
-    std::cout << "[v1] 结果: " << (res_base ? "SAT" : "UNSAT")
-              << " | 耗时 (t) : " << std::fixed << std::setprecision(3) << t_base << " ms" << std::endl;
-
-
-
-    // 4. 计算优化率 [(t - to) / t] * 100%
-    if (t_base > 0.0)
-    {
-        double opt_rate = ((t_base - t_opt) / t_base) * 100.0;
-        std::cout << ">>> 提升率: " << std::fixed << std::setprecision(2) << opt_rate << " % <<<" << std::endl;
-    }
-    else
-    {
-        std::cout << ">>> 基础耗时过短 (<0.001ms)，无法计算有效优化率 <<<" << std::endl;
-    }
-    std::cout << "=====================================================" << std::endl;
-
-    free_cnf(formula);
     return 0;
 }
