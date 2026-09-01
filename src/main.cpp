@@ -8,6 +8,7 @@
 #include "cnf_parser.h"
 #include "dpll_baseline.h"
 #include "dpll_optimized.h"
+#include "dpll_cdcl.h"
 #include "timer.h"
 #include "sudoku.h"
 
@@ -21,6 +22,44 @@ struct FileList
     int count;
 };
 
+// 规范保存 .res 结果文件
+static void save_res_file(const char *cnf_filepath, SolverStatus status, const int *assignment, int num_vars, double elapsed_ms)
+{
+    std::string res_path = cnf_filepath;
+    size_t last_dot = res_path.find_last_of('.');
+    if (last_dot != std::string::npos)
+    {
+        res_path = res_path.substr(0, last_dot);
+    }
+    res_path += ".res";
+
+    std::ofstream fout(res_path);
+    if (!fout.is_open())
+        return;
+
+    // s 结果: 1 (SAT), 0 (UNSAT), -1 (Timeout)
+    fout << "s " << (int)status << "\n";
+
+    // 仅在 SAT 且有赋值时输出 v 序列
+    if (status == STATUS_SAT && assignment != nullptr)
+    {
+        fout << "v ";
+        for (int i = 1; i <= num_vars; ++i)
+        {
+            if (assignment[i] == VAL_TRUE)
+                fout << i << " ";
+            else
+                fout << -i << " ";
+        }
+        fout << "\n";
+    }
+
+    fout << "t " << std::fixed << std::setprecision(2) << elapsed_ms << "\n";
+    fout.close();
+    std::cout << ">> 结果已自动保存到: " << res_path << std::endl;
+}
+
+// 核心：三引擎基准评测
 void run_benchmark_on_file(const char *filepath)
 {
     CNFFormula *formula = parse_cnf(filepath);
@@ -35,67 +74,118 @@ void run_benchmark_on_file(const char *filepath)
     std::cout << "-----------------------------------------------------" << std::endl;
 
     double timeout_limit = DEFAULT_TIMEOUT_MS; // 10秒超时
-    double t_base = 0.0, t_opt = 0.0;
+    double t_base = 0.0, t_2wl = 0.0, t_cdcl = 0.0;
+    SolverStatus res_base = STATUS_TIMEOUT;
+    SolverStatus res_2wl = STATUS_TIMEOUT;
+    SolverStatus res_cdcl = STATUS_TIMEOUT;
 
-    // 1. 运行基础版
-    int *assign_base = new int[formula->num_vars + 1];
-    for (int i = 0; i <= formula->num_vars; ++i)
-        assign_base[i] = VAL_UNASSIGNED;
+    // 1. 引擎一：基础版 DPLL
+    {
+        int *assign_base = new int[formula->num_vars + 1];
+        for (int i = 0; i <= formula->num_vars; ++i)
+            assign_base[i] = VAL_UNASSIGNED;
 
-    std::cout << "正在运行 [基础版 DPLL]..." << std::flush;
-    SolverStatus res_base = dpll_solve_baseline_timeout(formula, assign_base, timeout_limit, &t_base);
-    std::cout << " 完成!" << std::endl;
+        std::cout << "[1/3] 正在运行 [基础版 DPLL]..." << std::flush;
+        res_base = dpll_solve_baseline_timeout(formula, assign_base, timeout_limit, &t_base);
+        std::cout << " 完成!" << std::endl;
 
-    // 2. 运行优化版
-    Solver2WL *solver = create_solver_2wl(formula);
+        delete[] assign_base;
+    }
 
-    std::cout << "正在运行 [2WL 优化版 DPLL]..." << std::flush;
-    SolverStatus res_opt = dpll_solve_optimized_timeout(solver, timeout_limit, &t_opt);
-    std::cout << " 完成!" << std::endl;
+    // 2. 引擎二：2WL + JW 优化版
+    {
+        Solver2WL *solver_2wl = create_solver_2wl(formula);
 
-    // 3. 打印对比报告
+        std::cout << "[2/3] 正在运行 [2WL + JW 优化版]..." << std::flush;
+        res_2wl = dpll_solve_optimized_timeout(solver_2wl, timeout_limit, &t_2wl);
+        std::cout << " 完成!" << std::endl;
+
+        free_solver_2wl(solver_2wl);
+    }
+
+    // 3. 引擎三：顶配 CDCL (1-UIP + VSIDS + Luby 重启)
+    SolverCDCL *solver_cdcl = create_solver_cdcl(formula);
+    {
+        std::cout << "[3/3] 正在运行 [顶配 CDCL 引擎]..." << std::flush;
+        res_cdcl = cdcl_solve_timeout(solver_cdcl, timeout_limit, &t_cdcl);
+        std::cout << " 完成!" << std::endl;
+    }
+
+    // 4. 打印三引擎对比与优化率报表
     std::cout << "-----------------------------------------------------" << std::endl;
+    std::cout << "【三引擎求解报告】" << std::endl;
+
+    // 基础版输出
     if (res_base == STATUS_TIMEOUT)
     {
-        std::cout << "[基础版] 结果: TIMEOUT (超时) | 耗时 (t) : >= " << timeout_limit << " ms" << std::endl;
+        std::cout << "  (1) 基础版 DPLL : 超时 TIMEOUT | 耗时(t)    : >= " << timeout_limit << " ms" << std::endl;
     }
     else
     {
-        std::cout << "[基础版] 结果: " << (res_base == STATUS_SAT ? "SATISFIABLE" : "UNSATISFIABLE")
-                  << " | 耗时 (t) : " << std::fixed << std::setprecision(3) << t_base << " ms" << std::endl;
+        std::cout << "  (1) 基础版 DPLL : " << (res_base == STATUS_SAT ? "SATISFIABLE" : "UNSATISFIABLE")
+                  << " | 耗时(t)    : " << std::fixed << std::setprecision(3) << t_base << " ms" << std::endl;
     }
 
-    if (res_opt == STATUS_TIMEOUT)
+    // 2WL 优化版输出
+    if (res_2wl == STATUS_TIMEOUT)
     {
-        std::cout << "[优化版] 结果: TIMEOUT (超时) | 耗时 (to): >= " << timeout_limit << " ms" << std::endl;
+        std::cout << "  (2) 2WL+JW优化版: 超时 TIMEOUT | 耗时(to-2wl): >= " << timeout_limit << " ms" << std::endl;
     }
     else
     {
-        std::cout << "[优化版] 结果: " << (res_opt == STATUS_SAT ? "SATISFIABLE" : "UNSATISFIABLE")
-                  << " | 耗时 (to): " << std::fixed << std::setprecision(3) << t_opt << " ms" << std::endl;
+        std::cout << "  (2) 2WL+JW优化版: " << (res_2wl == STATUS_SAT ? "SATISFIABLE" : "UNSATISFIABLE")
+                  << " | 耗时(to-2wl): " << std::fixed << std::setprecision(3) << t_2wl << " ms" << std::endl;
     }
 
-    // 4. 优化率计算 (若基础版超时，计算理论下限)
-    if (res_base == STATUS_TIMEOUT && res_opt != STATUS_TIMEOUT)
+    // CDCL 顶配版输出
+    if (res_cdcl == STATUS_TIMEOUT)
     {
-        double lower_bound_rate = ((timeout_limit - t_opt) / timeout_limit) * 100.0;
-        std::cout << ">>> 性能优化率: >= " << std::fixed << std::setprecision(2) << lower_bound_rate << " % (保守估计下限) <<<" << std::endl;
+        std::cout << "  (3) 顶配 CDCL版 : 超时 TIMEOUT | 耗时(to-cdcl): >= " << timeout_limit << " ms" << std::endl;
     }
-    else if (res_base != STATUS_TIMEOUT && t_base > 0)
+    else
     {
-        double rate = ((t_base - t_opt) / t_base) * 100.0;
-        std::cout << ">>> 性能优化率: " << std::fixed << std::setprecision(2) << rate << " % <<<" << std::endl;
+        std::cout << "  (3) 顶配 CDCL版 : " << (res_cdcl == STATUS_SAT ? "SATISFIABLE" : "UNSATISFIABLE")
+                  << " | 耗时(to-cdcl): " << std::fixed << std::setprecision(3) << t_cdcl << " ms" << std::endl;
+    }
+    std::cout << "-----------------------------------------------------" << std::endl;
+
+    // 5. 优化率统计 (对比基础版)
+    if (res_base == STATUS_TIMEOUT)
+    {
+        if (res_2wl != STATUS_TIMEOUT)
+        {
+            double rate_2wl = ((timeout_limit - t_2wl) / timeout_limit) * 100.0;
+            std::cout << ">>> 2WL优化率  : >= " << std::fixed << std::setprecision(2) << rate_2wl << " % (保守估计)" << std::endl;
+        }
+        if (res_cdcl != STATUS_TIMEOUT)
+        {
+            double rate_cdcl = ((timeout_limit - t_cdcl) / timeout_limit) * 100.0;
+            std::cout << ">>> CDCL优化率 : >= " << std::fixed << std::setprecision(2) << rate_cdcl << " % (保守估计)" << std::endl;
+        }
+    }
+    else if (t_base > 0.0)
+    {
+        if (res_2wl != STATUS_TIMEOUT)
+        {
+            double rate_2wl = ((t_base - t_2wl) / t_base) * 100.0;
+            std::cout << ">>> 2WL优化率  : " << std::fixed << std::setprecision(2) << rate_2wl << " %" << std::endl;
+        }
+        if (res_cdcl != STATUS_TIMEOUT)
+        {
+            double rate_cdcl = ((t_base - t_cdcl) / t_base) * 100.0;
+            std::cout << ">>> CDCL优化率 : " << std::fixed << std::setprecision(2) << rate_cdcl << " %" << std::endl;
+        }
     }
 
-    // 5. 按照规范导出 .res (s 1 / s 0 / s -1)
-    save_solution_to_res(filepath, (int)res_opt, solver->assignment, formula->num_vars, t_opt);
+    // 6. 按照任务书规范输出 .res 文件 (优先采用最强的 CDCL 结果)
+    save_res_file(filepath, res_cdcl, solver_cdcl->assignment, formula->num_vars, t_cdcl);
     std::cout << "=====================================================" << std::endl;
 
-    delete[] assign_base;
-    free_solver_2wl(solver);
+    free_solver_cdcl(solver_cdcl);
     free_cnf(formula);
 }
 
+// 自动扫描 cnf_case 目录
 void select_and_run_cnf()
 {
     std::string target_dir = "cnf_case";
@@ -165,6 +255,7 @@ void select_and_run_cnf()
     }
 }
 
+// 主交互总控菜单
 int main(int argc, char *argv[])
 {
     if (argc > 1)
@@ -176,9 +267,9 @@ int main(int argc, char *argv[])
     while (true)
     {
         std::cout << "\n=====================================================" << std::endl;
-        std::cout << "           SAT 求解器与星形数独系统 (SAT-Sudoku)      " << std::endl;
+        std::cout << "       SAT 求解器 (三引擎基准) 与星形数独系统          " << std::endl;
         std::cout << "=====================================================" << std::endl;
-        std::cout << " [1] 选择 CNF 算例测试并导出 .res 文件 (自动扫描)" << std::endl;
+        std::cout << " [1] 三引擎性能基准测试与导出 .res (自动扫描)" << std::endl;
         std::cout << " [2] 星形数独游戏 (自动出题 / 交互填数 / SAT求解)" << std::endl;
         std::cout << " [0] 退出系统" << std::endl;
         std::cout << "=====================================================" << std::endl;
