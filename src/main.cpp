@@ -1,52 +1,78 @@
-
-#include"cnf_parser.h"
-#include"dpll_baseline.h"
-#include"timer.h"
+#include <iostream>
+#include <iomanip>
+#include <cstring>
+#include "cnf_parser.h"
+#include "dpll_baseline.h"
+#include "dpll_optimized.h"
+#include "timer.h"
 
 int main(int argc, char *argv[])
 {
     const char *filename = (argc > 1) ? argv[1] : "test.cnf";
 
-    // 1. 读取 CNF
+    std::cout << "=====================================================" << std::endl;
+    std::cout << "        不要用我解鸽笼和异或展开等等          " << std::endl;
+    std::cout << "=====================================================" << std::endl;
+    std::cout << "算例: " << filename << std::endl;
+
+    // 1. 读取 CNF 文件
     CNFFormula *formula = parse_cnf(filename);
     if (!formula)
         return 1;
 
-    // 2. 初始化赋值表 (大小为 num_vars + 1，从下标 1 开始使用)
-    int *assignment = new int[formula->num_vars + 1];
-    for (int i = 0; i <= formula->num_vars; ++i)
-    {
-        assignment[i] = VAL_UNASSIGNED;
-    }
+    std::cout << "变元总数: " << formula->num_vars << " | 子句总数: " << formula->num_clauses << std::endl;
+    std::cout << "-----------------------------------------------------" << std::endl;
 
-    // 3. 计时
     Timer timer;
-    timer.start();
-
-    // 4. 执行
-    bool is_sat = dpll_recursive_baseline(formula, assignment);
-    double elapsed_ms = timer.stop();
-
-    // 5. 打印
-    std::cout << "\n--------------我是答案----------------" << std::endl;
-    std::cout << "文件: " << filename << std::endl;
-    std::cout << "结果: " << (is_sat ? "SATISFIABLE (可满足)" : "UNSATISFIABLE (不可满足)") << std::endl;
-    std::cout << "耗时: " << elapsed_ms << " ms" << std::endl;
-
-    if (is_sat)
+    double t_base = 0.0;
+    double t_opt = 0.0;
+    bool res_base = false;
+    bool res_opt = false;
+    // 3. 运行 2WL 优化版本 DPLL (Optimized)
     {
-        std::cout << "满足解赋值: ";
-        for (int v = 1; v <= formula->num_vars; ++v)
-        {
-            std::cout << (assignment[v] == VAL_TRUE ? v : -v) << " ";
-        }
-        std::cout << std::endl;
+        Solver2WL *solver = create_solver_2wl(formula);
+
+        timer.start();
+        res_opt = dpll_solve_optimized(solver);
+        t_opt = timer.stop();
+
+        free_solver_2wl(solver);
     }
-    std::cout << "-------------------------------" << std::endl;
 
-    // 6. 释放堆内存
-    delete[] assignment;
+    std::cout << "[v2] 结果: " << (res_opt ? "SAT" : "UNSAT")
+              << " | 耗时 (to): " << std::fixed << std::setprecision(3) << t_opt << " ms" << std::endl;
+    std::cout << "-----------------------------------------------------" << std::endl;
+
+    // 2. 运行基础版本 DPLL (Baseline)
+    {
+        int *assignment = new int[formula->num_vars + 1];
+        for (int i = 0; i <= formula->num_vars; ++i)
+            assignment[i] = VAL_UNASSIGNED;
+
+        timer.start();
+        res_base = dpll_recursive_baseline(formula, assignment);
+        t_base = timer.stop();
+
+        delete[] assignment;
+    }
+
+    std::cout << "[v1] 结果: " << (res_base ? "SAT" : "UNSAT")
+              << " | 耗时 (t) : " << std::fixed << std::setprecision(3) << t_base << " ms" << std::endl;
+
+
+
+    // 4. 计算优化率 [(t - to) / t] * 100%
+    if (t_base > 0.0)
+    {
+        double opt_rate = ((t_base - t_opt) / t_base) * 100.0;
+        std::cout << ">>> 提升率: " << std::fixed << std::setprecision(2) << opt_rate << " % <<<" << std::endl;
+    }
+    else
+    {
+        std::cout << ">>> 基础耗时过短 (<0.001ms)，无法计算有效优化率 <<<" << std::endl;
+    }
+    std::cout << "=====================================================" << std::endl;
+
     free_cnf(formula);
-
     return 0;
 }
